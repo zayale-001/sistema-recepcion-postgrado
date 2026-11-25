@@ -278,9 +278,11 @@ def bootstrap_admin(datos: BootstrapAdminIn, db: Session = Depends(get_db)):
     if db.bind and db.bind.dialect.name == "postgresql":
         db.execute(text("LOCK TABLE usuarios IN EXCLUSIVE MODE"))
     correo = str(datos.email).strip().lower()
-    usuario = db.query(Usuario).filter(
-        Usuario.nombre_usuario == correo,
+    usuario = db.query(Usuario).outerjoin(Persona, Usuario.id_persona == Persona.id_persona).filter(
         Usuario.rol == RolUsuario.SUPERADMIN.value,
+        (Usuario.nombre_usuario == correo) |
+        (Persona.correo == correo) |
+        (Persona.nro_documento == datos.ci.strip()),
     ).first()
 
     if usuario:
