@@ -33,7 +33,6 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str | None = None
     SMTP_FROM: str | None = None
     PASSWORD_RECOVERY_ADMIN_EMAIL: str | None = None
-    INITIAL_ADMIN_SETUP_TOKEN: str | None = None
     FRONTEND_URL: str = "http://localhost:5174"
     
     # Base de datos SQLite por defecto (cero configuración para empezar de inmediato)

@@ -7,12 +7,11 @@ import smtplib
 import ssl
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 from app.core.database import get_db
 from app.core.security import verify_password, create_access_token, get_password_hash
 from app.core.config import settings
 from app.models.models import Persona, Usuario, RolUsuario, IntentoAcceso, TokenRecuperacion, SolicitudRecuperacion
-from app.schemas.schemas import Token, UsuarioOut, UsuarioCreate, BootstrapAdminIn, LoginIn, SolicitarRecuperacionIn, RestablecerContrasenaIn, CambiarContrasenaIn
+from app.schemas.schemas import Token, UsuarioOut, UsuarioCreate, LoginIn, SolicitarRecuperacionIn, RestablecerContrasenaIn, CambiarContrasenaIn
 from app.api.deps import get_current_user, require_roles
 
 router = APIRouter()
@@ -264,68 +263,6 @@ def restablecer_contrasena(datos: RestablecerContrasenaIn, db: Session = Depends
 @router.get("/me", response_model=UsuarioOut)
 def read_current_user(current_user: Usuario = Depends(get_current_user)):
     return current_user
-
-@router.post("/bootstrap-admin", response_model=UsuarioOut)
-def bootstrap_admin(datos: BootstrapAdminIn, db: Session = Depends(get_db)):
-    token_configurado = settings.INITIAL_ADMIN_SETUP_TOKEN
-    if not token_configurado:
-        raise HTTPException(status_code=404, detail="La inicialización del administrador no está habilitada.")
-    if not secrets.compare_digest(datos.setup_token, token_configurado):
-        raise HTTPException(status_code=403, detail="No se pudo autorizar la inicialización.")
-
-    # Serializa inicializaciones simultáneas en PostgreSQL para que solo se cree
-    # el primer administrador aunque lleguen dos solicitudes al mismo tiempo.
-    if db.bind and db.bind.dialect.name == "postgresql":
-        db.execute(text("LOCK TABLE usuarios IN EXCLUSIVE MODE"))
-    correo = str(datos.email).strip().lower()
-    usuario = db.query(Usuario).outerjoin(Persona, Usuario.id_persona == Persona.id_persona).filter(
-        Usuario.rol == RolUsuario.SUPERADMIN.value,
-        (Usuario.nombre_usuario == correo) |
-        (Persona.correo == correo) |
-        (Persona.nro_documento == datos.ci.strip()),
-    ).first()
-
-    if usuario:
-        # Permite al propietario del servicio recuperar la cuenta inicial aun
-        # cuando su contraseña no sea conocida, usando el secreto temporal.
-        usuario.password_hash = get_password_hash(datos.password)
-        usuario.activo = True
-        usuario.debe_cambiar_contrasena = False
-        db.commit()
-        db.refresh(usuario)
-        return usuario
-
-    if db.query(Usuario).filter(Usuario.rol == RolUsuario.SUPERADMIN.value).first():
-        raise HTTPException(status_code=409, detail="Ya existe un superadministrador. Usa el correo de esa cuenta.")
-
-    persona = db.query(Persona).filter(
-        (Persona.correo == correo) | (Persona.nro_documento == datos.ci.strip())
-    ).first()
-    if persona and persona.usuario:
-        raise HTTPException(status_code=409, detail="Ese correo o documento ya pertenece a otra cuenta. Usa los datos propios del administrador.")
-    if not persona:
-        persona = Persona(
-            nombres=datos.nombres.strip(),
-            apellidos=datos.apellidos.strip(),
-            nro_documento=datos.ci.strip(),
-            correo=correo,
-            telefono=datos.telefono,
-        )
-        db.add(persona)
-        db.flush()
-
-    usuario = Usuario(
-        id_persona=persona.id_persona,
-        nombre_usuario=correo,
-        password_hash=get_password_hash(datos.password),
-        rol=RolUsuario.SUPERADMIN.value,
-        activo=True,
-    )
-    db.add(usuario)
-    db.commit()
-    db.refresh(usuario)
-    return usuario
-
 
 @router.post("/crear-usuario", response_model=UsuarioOut)
 def crear_usuario(
