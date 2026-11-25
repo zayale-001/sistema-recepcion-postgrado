@@ -1,0 +1,4 @@
+.secret_key
+.env
+backups/
+__pycache__/

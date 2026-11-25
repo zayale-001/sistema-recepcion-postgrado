@@ -1,0 +1,28 @@
+# Secrets and local configuration
+backend/.env
+backend/.secret_key
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Local databases, uploaded applicant documents, and backups
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+backend/uploads/
+backend/backups/
+
+# Build products and local tooling
+frontend/node_modules/
+frontend/dist/
+frontend/.vercel/
+frontend/vite.config.ts.timestamp-*.mjs
+.vercel/
+backend_err.txt
+backend_log.txt
+frontend_err.txt
+frontend_log.txt
+__pycache__/
+*.py[cod]
+*.log
+*.txt.tmp
