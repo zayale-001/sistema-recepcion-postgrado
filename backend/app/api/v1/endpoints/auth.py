@@ -277,25 +277,44 @@ def bootstrap_admin(datos: BootstrapAdminIn, db: Session = Depends(get_db)):
     # el primer administrador aunque lleguen dos solicitudes al mismo tiempo.
     if db.bind and db.bind.dialect.name == "postgresql":
         db.execute(text("LOCK TABLE usuarios IN EXCLUSIVE MODE"))
-    if db.query(Usuario).count() > 0:
-        raise HTTPException(status_code=409, detail="La cuenta inicial ya fue creada.")
-    if db.query(Persona).filter(
-        (Persona.correo == str(datos.email)) | (Persona.nro_documento == datos.ci)
-    ).first():
-        raise HTTPException(status_code=409, detail="El correo o documento ya está registrado.")
+    correo = str(datos.email).strip().lower()
+    usuario = db.query(Usuario).filter(
+        Usuario.nombre_usuario == correo,
+        Usuario.rol == RolUsuario.SUPERADMIN.value,
+    ).first()
 
-    persona = Persona(
-        nombres=datos.nombres.strip(),
-        apellidos=datos.apellidos.strip(),
-        nro_documento=datos.ci.strip(),
-        correo=str(datos.email).strip().lower(),
-        telefono=datos.telefono,
-    )
-    db.add(persona)
-    db.flush()
+    if usuario:
+        # Permite al propietario del servicio recuperar la cuenta inicial aun
+        # cuando su contraseña no sea conocida, usando el secreto temporal.
+        usuario.password_hash = get_password_hash(datos.password)
+        usuario.activo = True
+        usuario.debe_cambiar_contrasena = False
+        db.commit()
+        db.refresh(usuario)
+        return usuario
+
+    if db.query(Usuario).filter(Usuario.rol == RolUsuario.SUPERADMIN.value).first():
+        raise HTTPException(status_code=409, detail="Ya existe un superadministrador. Usa el correo de esa cuenta.")
+
+    persona = db.query(Persona).filter(
+        (Persona.correo == correo) | (Persona.nro_documento == datos.ci.strip())
+    ).first()
+    if persona and persona.usuario:
+        raise HTTPException(status_code=409, detail="Ese correo o documento ya pertenece a otra cuenta. Usa los datos propios del administrador.")
+    if not persona:
+        persona = Persona(
+            nombres=datos.nombres.strip(),
+            apellidos=datos.apellidos.strip(),
+            nro_documento=datos.ci.strip(),
+            correo=correo,
+            telefono=datos.telefono,
+        )
+        db.add(persona)
+        db.flush()
+
     usuario = Usuario(
         id_persona=persona.id_persona,
-        nombre_usuario=str(datos.email).strip().lower(),
+        nombre_usuario=correo,
         password_hash=get_password_hash(datos.password),
         rol=RolUsuario.SUPERADMIN.value,
         activo=True,
