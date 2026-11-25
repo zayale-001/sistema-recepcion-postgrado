@@ -7,11 +7,12 @@ import smtplib
 import ssl
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.core.database import get_db
 from app.core.security import verify_password, create_access_token, get_password_hash
 from app.core.config import settings
 from app.models.models import Persona, Usuario, RolUsuario, IntentoAcceso, TokenRecuperacion, SolicitudRecuperacion
-from app.schemas.schemas import Token, UsuarioOut, UsuarioCreate, LoginIn, SolicitarRecuperacionIn, RestablecerContrasenaIn, CambiarContrasenaIn
+from app.schemas.schemas import Token, UsuarioOut, UsuarioCreate, BootstrapAdminIn, LoginIn, SolicitarRecuperacionIn, RestablecerContrasenaIn, CambiarContrasenaIn
 from app.api.deps import get_current_user, require_roles
 
 router = APIRouter()
@@ -264,8 +265,53 @@ def restablecer_contrasena(datos: RestablecerContrasenaIn, db: Session = Depends
 def read_current_user(current_user: Usuario = Depends(get_current_user)):
     return current_user
 
+@router.post("/bootstrap-admin", response_model=UsuarioOut)
+def bootstrap_admin(datos: BootstrapAdminIn, db: Session = Depends(get_db)):
+    token_configurado = settings.INITIAL_ADMIN_SETUP_TOKEN
+    if not token_configurado:
+        raise HTTPException(status_code=404, detail="La inicialización del administrador no está habilitada.")
+    if not secrets.compare_digest(datos.setup_token, token_configurado):
+        raise HTTPException(status_code=403, detail="No se pudo autorizar la inicialización.")
+
+    # Serializa inicializaciones simultáneas en PostgreSQL para que solo se cree
+    # el primer administrador aunque lleguen dos solicitudes al mismo tiempo.
+    if db.bind and db.bind.dialect.name == "postgresql":
+        db.execute(text("LOCK TABLE usuarios IN EXCLUSIVE MODE"))
+    if db.query(Usuario).count() > 0:
+        raise HTTPException(status_code=409, detail="La cuenta inicial ya fue creada.")
+    if db.query(Persona).filter(
+        (Persona.correo == str(datos.email)) | (Persona.nro_documento == datos.ci)
+    ).first():
+        raise HTTPException(status_code=409, detail="El correo o documento ya está registrado.")
+
+    persona = Persona(
+        nombres=datos.nombres.strip(),
+        apellidos=datos.apellidos.strip(),
+        nro_documento=datos.ci.strip(),
+        correo=str(datos.email).strip().lower(),
+        telefono=datos.telefono,
+    )
+    db.add(persona)
+    db.flush()
+    usuario = Usuario(
+        id_persona=persona.id_persona,
+        nombre_usuario=str(datos.email).strip().lower(),
+        password_hash=get_password_hash(datos.password),
+        rol=RolUsuario.SUPERADMIN.value,
+        activo=True,
+    )
+    db.add(usuario)
+    db.commit()
+    db.refresh(usuario)
+    return usuario
+
+
 @router.post("/crear-usuario", response_model=UsuarioOut)
-def crear_usuario(usuario_in: UsuarioCreate, db: Session = Depends(get_db)):
+def crear_usuario(
+    usuario_in: UsuarioCreate,
+    current_user: Usuario = Depends(require_roles([RolUsuario.SUPERADMIN.value])),
+    db: Session = Depends(get_db),
+):
     # Verificar si persona existe
     persona = db.query(Persona).filter(
         (Persona.correo == usuario_in.email) | (Persona.nro_documento == usuario_in.ci)

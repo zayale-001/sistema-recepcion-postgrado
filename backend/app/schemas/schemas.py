@@ -61,6 +61,15 @@ class UsuarioCreate(BaseModel):
     password: str
     rol: str = "COORDINADOR"
 
+class BootstrapAdminIn(BaseModel):
+    setup_token: str = Field(min_length=32, max_length=256)
+    ci: str = Field(min_length=3, max_length=30)
+    nombres: str = Field(min_length=1, max_length=100)
+    apellidos: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    telefono: Optional[str] = None
+    password: str = Field(min_length=12, max_length=128)
+
 class UsuarioOut(UsuarioBase):
     id_usuario: str
     id_persona: Optional[str] = None
