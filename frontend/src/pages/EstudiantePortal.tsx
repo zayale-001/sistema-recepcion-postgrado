@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Usuario, DocumentoItem, MiInscripcion, ConvocatoriaAbierta, Categoria, Area } from '../types';
 import { SeguimientoService, DocumentosService, CatalogosService } from '../services/api';
+import { PdfCompressorModal } from '../components/PdfCompressorModal';
 import { 
   GraduationCap, 
   Upload, 
@@ -8,11 +9,13 @@ import {
   AlertTriangle, 
   Clock, 
   FileText, 
-  ExternalLink,
+  Eye,
   Download,
   Pencil,
   FileCheck,
-  Trash2
+  Trash2,
+  Minimize2,
+  Printer
 } from 'lucide-react';
 
 interface EstudiantePortalProps {
@@ -45,6 +48,8 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
   const [inscribiendo, setInscribiendo] = useState(false);
   const [cargandoConvocatorias, setCargandoConvocatorias] = useState(false);
   const [mostrarOferta, setMostrarOferta] = useState(false);
+  const [compresorDocTarget, setCompresorDocTarget] = useState<DocumentoItem | null>(null);
+  const [mostrarCompresorGeneral, setMostrarCompresorGeneral] = useState(false);
 
   const nombreEstudiante = usuario.persona 
     ? `${usuario.persona.nombres} ${usuario.persona.apellidos}`
@@ -55,6 +60,16 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
   useEffect(() => {
     cargarDatosEstudiante();
   }, [usuario.id_usuario]);
+
+  useEffect(() => {
+    if (!inscripcionId) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        cargarExpediente(inscripcionId).catch(() => {});
+      }
+    }, 15000);
+    return () => window.clearInterval(interval);
+  }, [inscripcionId]);
 
   const cargarExpediente = async (id: string) => {
     const docs = await SeguimientoService.getExpedienteEstudiante(id);
@@ -171,31 +186,22 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
   const inscripcionActual = inscripciones.find(i => i.inscripcion_id === inscripcionId) || null;
   const codigoInscripcion = inscripcionActual?.codigo_inscripcion || '';
 
-  const handleSubirArchivo = async (doc: DocumentoItem, e: React.ChangeEvent<HTMLInputElement>) => {
-    const requisitoId = doc.id_requisito;
+  const subirArchivoDirecto = async (doc: DocumentoItem, file: File) => {
     if (!inscripcionId) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
-      alert('El archivo supera el límite permitido de 10 MB.');
-      e.target.value = '';
+      alert('El archivo supera el límite permitido de 10 MB. Usa "Ajustar / Achicar PDF" para reducir su tamaño.');
       return;
     }
-
     if (doc.estado_revision === 'Válido') {
       const seguir = window.confirm(
         'Este documento ya fue aprobado. Si lo reemplazas, volverá a revisión de la UPI. ¿Deseas continuar?'
       );
-      if (!seguir) {
-        e.target.value = '';
-        return;
-      }
+      if (!seguir) return;
     }
-
     try {
-      setSubiendoId(requisitoId);
+      setSubiendoId(doc.id_requisito);
       setPorcentajeCarga(0);
-      await DocumentosService.subirDocumento(inscripcionId, requisitoId, file, setPorcentajeCarga);
+      await DocumentosService.subirDocumento(inscripcionId, doc.id_requisito, file, setPorcentajeCarga);
       await cargarExpediente(inscripcionId);
       alert('Documento subido correctamente para revisión de la UPI.');
     } catch (err: any) {
@@ -203,8 +209,14 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
     } finally {
       setSubiendoId(null);
       setPorcentajeCarga(0);
-      e.target.value = '';
     }
+  };
+
+  const handleSubirArchivo = async (doc: DocumentoItem, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await subirArchivoDirecto(doc, file);
+    e.target.value = '';
   };
 
   const totalRequisitos = documentos.length;
@@ -349,10 +361,10 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
         </div>
 
         {porcentaje === 100 && inscripcionId && (
-          <div style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="button" onClick={() => SeguimientoService.descargarComprobantePdf(inscripcionId)} className="btn btn-primary btn-sm">
+          <div className="no-print" style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => SeguimientoService.verComprobantePdf(inscripcionId)} className="btn btn-primary btn-sm">
               <FileCheck size={16} />
-              <span>Descargar Boleta de Conformidad (PDF)</span>
+              <span>Mostrar Boleta de Conformidad (PDF)</span>
             </button>
           </div>
         )}
@@ -360,9 +372,21 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
 
       {/* Lista de requisitos con botón de subida */}
       <div className="card student-documents-card">
-        <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '16px', color: '#1e293b' }}>
-          Requisitos Documentales Exigidos
-        </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '16px' }}>
+          <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1e293b' }}>
+            Requisitos Documentales Exigidos
+          </h3>
+          <div className="no-print" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => setMostrarCompresorGeneral(true)} className="btn btn-outline btn-sm">
+              <Minimize2 size={14} />
+              <span>Ajustar / Achicar PDF</span>
+            </button>
+            <button type="button" onClick={() => window.print()} className="btn btn-outline btn-sm">
+              <Printer size={14} />
+              <span>Imprimir requisitos</span>
+            </button>
+          </div>
+        </div>
         <p className="student-documents-hint">{documentosPorResolver > 0 ? `${documentosPorResolver} documento(s) necesitan tu atención. Los pendientes aparecen primero.` : 'Tus documentos están al día.'}</p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -435,12 +459,12 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
                     </details>
                   )}
 
-                <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', borderTop: '1px solid #f1f5f9', paddingTop: '10px' }}>
+                <div className="no-print" style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', borderTop: '1px solid #f1f5f9', paddingTop: '10px' }}>
                   {subido ? (
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       <button type="button" onClick={() => DocumentosService.abrirDocumento(doc.id_documento)} className="btn btn-outline btn-sm">
-                        <ExternalLink size={14} />
-                        <span>Ver</span>
+                        <Eye size={14} />
+                        <span>Mostrar</span>
                       </button>
                       <button type="button" onClick={() => DocumentosService.descargarDocumento(doc.id_documento, doc.nombre_archivo || 'documento')} className="btn btn-outline btn-sm">
                         <Download size={14} />
@@ -457,7 +481,17 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
                         <span>{subiendoId === doc.id_requisito ? 'Procesando...' : 'Eliminar'}</span>
                       </button>
                     </div>
-                  ) : <div />}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setCompresorDocTarget(doc)}
+                      className="btn btn-outline btn-sm"
+                      title="Optimizar o achicar PDF antes de subir"
+                    >
+                      <Minimize2 size={14} />
+                      <span>Achicar PDF</span>
+                    </button>
+                  )}
 
                   <label
                     className={subido ? 'btn btn-outline btn-sm' : 'btn btn-primary'}
@@ -485,6 +519,21 @@ export const EstudiantePortal: React.FC<EstudiantePortalProps> = ({ usuario }) =
           })}
         </div>
       </div>
+
+      {(mostrarCompresorGeneral || compresorDocTarget) && (
+        <PdfCompressorModal
+          tituloRequisito={compresorDocTarget?.nombre_requisito}
+          onClose={() => {
+            setMostrarCompresorGeneral(false);
+            setCompresorDocTarget(null);
+          }}
+          onUseFile={
+            compresorDocTarget
+              ? (file) => subirArchivoDirecto(compresorDocTarget, file)
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 };

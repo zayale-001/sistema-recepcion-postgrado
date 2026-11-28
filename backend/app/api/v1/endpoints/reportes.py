@@ -125,6 +125,65 @@ def exportar_reporte_general_admin(
         headers={"Content-Disposition": "attachment; filename=Reporte_General_Postulantes.xlsx"}
     )
 
+
+@router.get("/admin/exportar-programas")
+def exportar_resumen_programas_admin(
+    categoria: str | None = None,
+    gestion: str | None = None,
+    current_user: Usuario = Depends(require_roles([RolUsuario.SUPERADMIN.value])),
+    db: Session = Depends(get_db)
+):
+    cursos = obtener_resumen_convocatorias(current_user, db)
+    filtrados = [
+        c for c in cursos
+        if (not categoria or c.categoria_nombre == categoria)
+        and (not gestion or c.gestion == gestion)
+    ]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Resumen por Programas"
+    headers = [
+        "Programa", "Categoría", "Versión / Edición", "Gestión", "Coordinador",
+        "Plazo", "Total Postulantes", "Completos", "Faltantes", "Observados", "Aprobados", "% Avance"
+    ]
+    ws.append(headers)
+    header_fill = PatternFill(start_color="C51D25", end_color="C51D25", fill_type="solid")
+    for cell in ws[1]:
+        cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for c in filtrados:
+        pct = round((c.estudiantes_completos / c.total_estudiantes) * 100, 1) if c.total_estudiantes > 0 else 0.0
+        ws.append([
+            c.programa_nombre, c.categoria_nombre, c.version_edicion, c.gestion,
+            c.coordinador_encargado or "Sin Asignar", c.estado_plazo,
+            c.total_estudiantes, c.estudiantes_completos, c.estudiantes_faltantes,
+            c.estudiantes_observados, c.estudiantes_aprobados, pct
+        ])
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    ws.sheet_view.showGridLines = False
+    ws.row_dimensions[1].height = 32
+    for column, width in {"A": 40, "B": 18, "C": 24, "D": 11, "E": 26, "F": 14, "G": 16, "H": 12, "I": 12, "J": 12, "K": 12, "L": 13}.items():
+        ws.column_dimensions[column].width = width
+    for row in range(2, ws.max_row + 1):
+        ws.cell(row, 12).number_format = "0.0"
+        if row % 2 == 1:
+            for cell in ws[row]:
+                cell.fill = PatternFill(start_color="FFF5F5", end_color="FFF5F5", fill_type="solid")
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Resumen_Por_Programas.xlsx"}
+    )
+
 @router.get("/curso/{convocatoria_id}/exportar-excel")
 def exportar_seguimiento_excel(
     convocatoria_id: str,

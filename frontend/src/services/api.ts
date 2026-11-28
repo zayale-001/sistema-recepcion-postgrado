@@ -117,6 +117,19 @@ export const SeguimientoService = {
   descargarComprobantePdf: async (inscripcionId: string) => {
     const res = await api.get(`/reportes/inscripcion/${inscripcionId}/comprobante-pdf`, { responseType: 'blob' });
     descargarBlob(res.data, `comprobante_${inscripcionId}.pdf`);
+  },
+  verComprobantePdf: async (inscripcionId: string) => {
+    const tab = window.open('about:blank', '_blank');
+    try {
+      const res = await api.get(`/reportes/inscripcion/${inscripcionId}/comprobante-pdf`, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      if (tab) tab.location.href = url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      tab?.close();
+      throw error;
+    }
   }
 };
 
@@ -128,6 +141,10 @@ export const ReportesService = {
   descargarReporteAdmin: async (params: { categoria?: string; gestion?: string; estado?: string; busqueda?: string }) => {
     const res = await api.get('/reportes/admin/exportar-excel', { params, responseType: 'blob' });
     descargarBlob(res.data, 'Reporte_General_Postulantes.xlsx');
+  },
+  descargarReporteProgramas: async (params: { categoria?: string; gestion?: string }) => {
+    const res = await api.get('/reportes/admin/exportar-programas', { params, responseType: 'blob' });
+    descargarBlob(res.data, 'Resumen_Por_Programas.xlsx');
   }
 };
 
@@ -176,6 +193,20 @@ export const DocumentosService = {
   descargarDocumento: async (documentoId: string, nombre: string) => {
     const res = await api.get(`/documentos/ver/${documentoId}`, { params: { descargar: true }, responseType: 'blob' });
     descargarBlob(res.data, nombre);
+  },
+  comprimirPdf: async (file: File, nivel: 'ligera' | 'media' | 'alta' = 'media') => {
+    const formData = new FormData();
+    formData.append('archivo', file);
+    formData.append('nivel', nivel);
+    const res = await api.post('/documentos/comprimir-pdf', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+    });
+    const originalSize = Number(res.headers['x-original-size'] || file.size);
+    const compressedSize = Number(res.headers['x-compressed-size'] || res.data.size);
+    const baseName = file.name.replace(/\.pdf$/i, '');
+    const compressedFile = new File([res.data], `${baseName}_optimizado.pdf`, { type: 'application/pdf' });
+    return { file: compressedFile, originalSize, compressedSize };
   }
 };
 

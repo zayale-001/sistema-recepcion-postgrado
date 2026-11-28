@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, CheckCircle2, Download, Search, Users } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, BarChart3, CheckCircle2, Download, FileSpreadsheet, Printer, Search, Users } from 'lucide-react';
 import { ReportesService } from '../services/api';
 import { CursoResumen, ReportePostulante } from '../types';
 
@@ -12,9 +12,11 @@ export const ReportesAdminPage: React.FC = () => {
   const [busqueda, setBusqueda] = useState('');
   const [cargando, setCargando] = useState(true);
   const [descargando, setDescargando] = useState(false);
+  const [descargandoProgramas, setDescargandoProgramas] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
+  const cargarResumen = useCallback((silencioso = false) => {
+    if (!silencioso) setCargando(true);
     ReportesService.obtenerResumenAdmin()
       .then((data) => {
         setProgramas(data.programas);
@@ -23,6 +25,16 @@ export const ReportesAdminPage: React.FC = () => {
       .catch((err) => setError(err.response?.data?.detail || 'No se pudieron cargar los reportes.'))
       .finally(() => setCargando(false));
   }, []);
+
+  useEffect(() => {
+    cargarResumen();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        cargarResumen(true);
+      }
+    }, 15000);
+    return () => window.clearInterval(interval);
+  }, [cargarResumen]);
 
   const categorias = useMemo(() => [...new Set(postulantes.map((p) => p.categoria_nombre))].sort((a, b) => a.localeCompare(b)), [postulantes]);
   const gestiones = useMemo(() => [...new Set(postulantes.map((p) => p.gestion))].sort((a, b) => Number(b) - Number(a)), [postulantes]);
@@ -55,6 +67,18 @@ export const ReportesAdminPage: React.FC = () => {
     }
   };
 
+  const descargarProgramas = async () => {
+    try {
+      setDescargandoProgramas(true);
+      setError('');
+      await ReportesService.descargarReporteProgramas({ categoria, gestion });
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'No se pudo descargar el resumen por programas.');
+    } finally {
+      setDescargandoProgramas(false);
+    }
+  };
+
   const limpiarFiltros = () => {
     setCategoria('');
     setGestion('');
@@ -72,10 +96,20 @@ export const ReportesAdminPage: React.FC = () => {
           <h1>Reportes institucionales</h1>
           <p>Consulta y descarga el estado de las postulaciones y sus expedientes documentales.</p>
         </div>
-        <button className="btn btn-primary" type="button" onClick={descargar} disabled={descargando || postulantesFiltrados.length === 0}>
-          <Download size={17} />
-          <span>{descargando ? 'Preparando Excel…' : 'Descargar Excel'}</span>
-        </button>
+        <div className="no-print" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button className="btn btn-outline" type="button" onClick={() => window.print()}>
+            <Printer size={17} />
+            <span>Imprimir resumen</span>
+          </button>
+          <button className="btn btn-outline" type="button" onClick={descargarProgramas} disabled={descargandoProgramas || programasFiltrados.length === 0}>
+            <FileSpreadsheet size={17} color="#16a34a" />
+            <span>{descargandoProgramas ? 'Exportando…' : 'Exportar por programas'}</span>
+          </button>
+          <button className="btn btn-primary" type="button" onClick={descargar} disabled={descargando || postulantesFiltrados.length === 0}>
+            <Download size={17} />
+            <span>{descargando ? 'Preparando Excel…' : 'Descargar Excel'}</span>
+          </button>
+        </div>
       </header>
 
       {error && <div className="reports-error" role="alert">{error}</div>}

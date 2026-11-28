@@ -1,9 +1,10 @@
 from __future__ import annotations
+import io
 import os
 import shutil
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.config import settings
@@ -174,4 +175,86 @@ def ver_o_descargar_archivo(
         filename=doc.nombre_archivo or "documento.pdf",
         media_type=media_type,
         content_disposition_type="attachment" if descargar else "inline"
+    )
+
+
+@router.post("/comprimir-pdf")
+async def comprimir_pdf(
+    archivo: UploadFile = File(...),
+    nivel: str = Form("media"),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Optimiza y reduce el tamaño de un archivo PDF para facilitar su carga."""
+    extension = os.path.splitext(archivo.filename or "")[1].lower()
+    if extension != ".pdf":
+        raise HTTPException(status_code=400, detail="Solo se pueden ajustar archivos PDF.")
+
+    max_input = 50 * 1024 * 1024
+    contenido = await archivo.read(max_input + 1)
+    if len(contenido) > max_input:
+        raise HTTPException(status_code=413, detail="El PDF de entrada supera el máximo de 50 MB.")
+    if not contenido.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="El archivo seleccionado no es un PDF válido.")
+
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=501, detail="El compresor de PDF no está disponible en el servidor.")
+
+    nivel_norm = (nivel or "media").lower()
+    if nivel_norm not in ("ligera", "media", "alta"):
+        nivel_norm = "media"
+
+    doc_in = fitz.open(stream=contenido, filetype="pdf")
+    try:
+        # 1) Compresión estructural sin pérdida
+        buf_estructural = io.BytesIO()
+        doc_in.save(buf_estructural, garbage=4, deflate=True, clean=True)
+        mejor_bytes = buf_estructural.getvalue()
+
+        # 2) Para compresión media/alta, rasterizar páginas a JPEG optimizado si reduce tamaño
+        if nivel_norm in ("media", "alta"):
+            from PIL import Image
+
+            dpi = 130 if nivel_norm == "media" else 96
+            calidad = 72 if nivel_norm == "media" else 52
+            doc_out = fitz.open()
+            try:
+                zoom = dpi / 72.0
+                matriz = fitz.Matrix(zoom, zoom)
+                for page in doc_in:
+                    pix = page.get_pixmap(matrix=matriz, alpha=False)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    img_buf = io.BytesIO()
+                    img.save(img_buf, format="JPEG", quality=calidad, optimize=True)
+                    img_bytes = img_buf.getvalue()
+
+                    rect = page.rect
+                    new_page = doc_out.new_page(width=rect.width, height=rect.height)
+                    new_page.insert_image(rect, stream=img_bytes)
+
+                buf_raster = io.BytesIO()
+                doc_out.save(buf_raster, garbage=4, deflate=True)
+                raster_bytes = buf_raster.getvalue()
+                if len(raster_bytes) < len(mejor_bytes):
+                    mejor_bytes = raster_bytes
+            finally:
+                doc_out.close()
+
+        if len(mejor_bytes) > len(contenido):
+            mejor_bytes = contenido
+    finally:
+        doc_in.close()
+
+    nombre_base = os.path.splitext(os.path.basename(archivo.filename or "documento.pdf"))[0]
+    nombre_salida = f"{nombre_base}_optimizado.pdf"
+    return Response(
+        content=mejor_bytes,
+        media_type="application/pdf",
+        headers={
+            "X-Original-Size": str(len(contenido)),
+            "X-Compressed-Size": str(len(mejor_bytes)),
+            "Access-Control-Expose-Headers": "X-Original-Size, X-Compressed-Size",
+            "Content-Disposition": f'inline; filename="{nombre_salida}"',
+        },
     )

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { EstudianteSeguimiento, DocumentoItem } from '../types';
 import { SeguimientoService, DocumentosService } from '../services/api';
+import { PdfCompressorModal } from '../components/PdfCompressorModal';
 import { 
   X, 
   CheckCircle2, 
@@ -10,7 +11,10 @@ import {
   Clock, 
   History, 
   Stamp, 
-  Maximize2 
+  Maximize2,
+  Eye,
+  Printer,
+  Minimize2
 } from 'lucide-react';
 
 interface DetalleExpedienteModalProps {
@@ -32,6 +36,7 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
   const [motivoObservacion, setMotivoObservacion] = useState('');
   const [subiendoReqId, setSubiendoReqId] = useState<string | null>(null);
   const [tabDerecha, setTabDerecha] = useState<'visor' | 'auditoria'>('visor');
+  const [mostrarCompresor, setMostrarCompresor] = useState(false);
 
   useEffect(() => {
     cargarExpediente();
@@ -129,9 +134,19 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
               <strong>{estudiante.apellidos}, {estudiante.nombres}</strong> • C.I.: {estudiante.ci} • Estado Actual: <strong>{estudiante.estado_nombre}</strong>
             </div>
           </div>
-          <button onClick={onClose} className="btn btn-outline btn-sm" style={{ padding: '6px' }}>
-            <X size={20} />
-          </button>
+          <div className="no-print" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button type="button" onClick={() => setMostrarCompresor(true)} className="btn btn-outline btn-sm" title="Ajustar o reducir el peso de un PDF">
+              <Minimize2 size={15} />
+              <span>Achicar PDF</span>
+            </button>
+            <button type="button" onClick={() => window.print()} className="btn btn-outline btn-sm" title="Imprimir requisitos del estudiante">
+              <Printer size={15} />
+              <span>Imprimir</span>
+            </button>
+            <button type="button" onClick={onClose} className="btn btn-outline btn-sm" style={{ padding: '6px' }}>
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', flex: 1, overflow: 'hidden' }}>
@@ -150,7 +165,7 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
                 return (
                   <div 
                     key={doc.id_documento}
-                    onClick={() => setDocSeleccionado(doc)}
+                    onClick={() => { setDocSeleccionado(doc); setTabDerecha('visor'); }}
                     style={{
                       border: estaSeleccionado ? '2px solid #c51d25' : '1px solid #e2e8f0',
                       borderRadius: '10px',
@@ -234,8 +249,19 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
                       </div>
 
                       {subido && (
-                        <div style={{ display: 'flex', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
                           <button
+                            type="button"
+                            onClick={() => { setDocSeleccionado(doc); setTabDerecha('visor'); }}
+                            className="btn btn-outline btn-sm"
+                            title="Mostrar documento en el visor"
+                          >
+                            <Eye size={13} />
+                            <span>Mostrar</span>
+                          </button>
+
+                          <button
+                            type="button"
                             onClick={() => handleValidar(doc.id_documento, 'Válido')}
                             className="btn btn-success btn-sm"
                             title="Aprobar documento"
@@ -245,10 +271,11 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
                           </button>
 
                           <button
+                            type="button"
                             onClick={() => setObservandoDocId(doc.id_documento)}
                             className="btn btn-outline btn-sm"
                             style={{ color: '#dc2626', borderColor: '#fca5a5' }}
-                            title="Observar con motivo de rechazo"
+                            title="Observar documento con motivo"
                           >
                             <AlertTriangle size={13} />
                             <span>Observar</span>
@@ -324,11 +351,23 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
                     <div style={{ fontSize: '0.82rem', color: '#475569', marginBottom: '8px', fontWeight: 600 }}>
                       Mostrando: {docSeleccionado.nombre_requisito} ({docSeleccionado.nombre_archivo})
                     </div>
-                    <iframe
-                      src={documentoUrl || undefined}
-                      title="Visor de Documento"
-                      style={{ width: '100%', height: '100%', minHeight: '500px', border: '1px solid #cbd5e1', borderRadius: '8px', background: 'white' }}
-                    />
+                    {/\.(jpg|jpeg|png)$/i.test(docSeleccionado.nombre_archivo || '') ? (
+                      <div style={{ width: '100%', height: '100%', minHeight: '500px', border: '1px solid #cbd5e1', borderRadius: '8px', background: 'white', overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
+                        {documentoUrl && (
+                          <img
+                            src={documentoUrl}
+                            alt={docSeleccionado.nombre_requisito}
+                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      <iframe
+                        src={documentoUrl || undefined}
+                        title="Visor de Documento"
+                        style={{ width: '100%', height: '100%', minHeight: '500px', border: '1px solid #cbd5e1', borderRadius: '8px', background: 'white' }}
+                      />
+                    )}
                   </div>
                 ) : (
                   <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#64748b', textAlign: 'center', padding: '40px' }}>
@@ -373,10 +412,10 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
           </div>
         </div>
 
-        <div className="modal-footer">
+        <div className="modal-footer no-print">
           <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
             <div style={{ fontSize: '0.82rem', color: '#64748b' }}>
-              💡 Haz clic en cualquier requisito para ver su archivo directamente en el visor integrado.
+              💡 Haz clic en cualquier requisito o en "Mostrar" para ver el archivo directamente en el visor integrado.
             </div>
             <button onClick={onClose} className="btn btn-primary">
               Cerrar Expediente
@@ -384,6 +423,10 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
           </div>
         </div>
       </div>
+
+      {mostrarCompresor && (
+        <PdfCompressorModal onClose={() => setMostrarCompresor(false)} />
+      )}
     </div>
   );
 };

@@ -18,6 +18,7 @@ export const App: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cursoSeleccionado, setCursoSeleccionado] = useState<CursoResumen | null>(null);
   const [estudianteRevisar, setEstudianteRevisar] = useState<EstudianteSeguimiento | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const user = AuthService.getCurrentUser();
@@ -99,12 +100,14 @@ export const App: React.FC = () => {
               curso={cursoSeleccionado}
               onVolver={() => setCursoSeleccionado(null)}
               onVerExpediente={(est) => setEstudianteRevisar(est)}
+              refreshKey={refreshKey}
             />
           ) : (
             <DashboardCoordinador 
               onSelectCurso={(c) => setCursoSeleccionado(c)}
               selectedCategory={selectedCategory}
               onSelectCategory={setSelectedCategory}
+              refreshKey={refreshKey}
             />
           )}
         </main>
@@ -115,9 +118,7 @@ export const App: React.FC = () => {
         <DetalleExpedienteModal
           estudiante={estudianteRevisar}
           onClose={() => setEstudianteRevisar(null)}
-          onActualizado={() => {
-            // Actualización reactiva
-          }}
+          onActualizado={() => setRefreshKey((k) => k + 1)}
         />
       )}
     </div>

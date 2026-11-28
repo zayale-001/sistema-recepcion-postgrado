@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { CursoResumen, EstudianteSeguimiento } from '../types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { CursoResumen, EstudianteSeguimiento, DocumentoItem } from '../types';
 import { SeguimientoService } from '../services/api';
 import { 
   ArrowLeft, 
@@ -15,22 +15,29 @@ import {
   FileCheck,
   Stamp,
   Calendar,
-  X
+  X,
+  Printer,
+  RefreshCw,
+  ClipboardCheck
 } from 'lucide-react';
 
 interface SeguimientoCursoProps {
   curso: CursoResumen;
   onVolver: () => void;
   onVerExpediente: (estudiante: EstudianteSeguimiento) => void;
+  refreshKey?: number;
 }
 
 export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({ 
   curso, 
   onVolver, 
-  onVerExpediente 
+  onVerExpediente,
+  refreshKey = 0
 }) => {
   const [estudiantes, setEstudiantes] = useState<EstudianteSeguimiento[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actualizando, setActualizando] = useState(false);
+  const [imprimiendoEstId, setImprimiendoEstId] = useState<string | null>(null);
   const [filtroEstado, setFiltroEstado] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
 
@@ -40,21 +47,32 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
   const [importando, setImportando] = useState(false);
   const [resultadoImportacion, setResultadoImportacion] = useState<string | null>(null);
 
-  useEffect(() => {
-    cargarEstudiantes();
-  }, [curso.edicion_id]);
-
-  const cargarEstudiantes = async () => {
+  const cargarEstudiantes = useCallback(async (silencioso = false) => {
     try {
-      setLoading(true);
+      if (silencioso) setActualizando(true);
+      else setLoading(true);
       const data = await SeguimientoService.getEstudiantesCurso(curso.edicion_id);
       setEstudiantes(data);
     } catch (err) {
       console.error('Error al cargar seguimiento de estudiantes:', err);
     } finally {
       setLoading(false);
+      setActualizando(false);
     }
-  };
+  }, [curso.edicion_id]);
+
+  useEffect(() => {
+    cargarEstudiantes();
+  }, [cargarEstudiantes, refreshKey]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        cargarEstudiantes(true);
+      }
+    }, 12000);
+    return () => window.clearInterval(interval);
+  }, [cargarEstudiantes]);
 
   const handleImportarExcel = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,7 +91,17 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
     }
   };
 
-  // Generador de enlace WhatsApp directo
+  const tienePorRevisar = (est: EstudianteSeguimiento) =>
+    est.requisitos_subidos > est.requisitos_aprobados + est.requisitos_observados;
+
+  const esObservado = (est: EstudianteSeguimiento) =>
+    est.estado_nombre.toLowerCase() === 'observada' || est.requisitos_observados > 0;
+
+  const esCompleto = (est: EstudianteSeguimiento) =>
+    ['completa', 'habilitada'].includes(est.estado_nombre.toLowerCase()) ||
+    (est.total_requisitos > 0 && est.requisitos_faltantes === 0 && est.requisitos_observados === 0);
+
+  // Generador de enlace WhatsApp directo con mensaje listo según estado
   const generarEnlaceWhatsApp = (est: EstudianteSeguimiento) => {
     let telefono = (est.telefono || '').replace(/\D/g, '');
     if (!telefono) return null;
@@ -81,12 +109,103 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
       telefono = `591${telefono}`; // Código de país Bolivia
     }
 
-    const faltantesTexto = est.documentos_faltantes_nombres.join(', ');
-    const mensaje = encodeURIComponent(
-      `Estimado(a) ${est.nombres} ${est.apellidos}, le saludamos desde la Coordinación de Postgrado (${curso.programa_nombre}). Le recordamos que tiene pendiente la entrega de los siguientes requisitos documentales:\n\n*${faltantesTexto}*\n\nPor favor súbalos al sistema a la brevedad para completar su habilitación.`
-    );
+    let cuerpo = '';
+    if (est.requisitos_faltantes > 0) {
+      const faltantesTexto = est.documentos_faltantes_nombres.join(', ');
+      cuerpo = `Estimado(a) ${est.nombres} ${est.apellidos}, le saludamos desde la Coordinación de Postgrado (${curso.programa_nombre}). Le recordamos que tiene pendiente la entrega de los siguientes requisitos documentales:\n\n*${faltantesTexto}*\n\nPor favor súbalos al sistema a la brevedad para completar su habilitación.`;
+    } else if (est.requisitos_observados > 0) {
+      cuerpo = `Estimado(a) ${est.nombres} ${est.apellidos}, le saludamos desde la Coordinación de Postgrado (${curso.programa_nombre}). Tiene ${est.requisitos_observados} documento(s) con observaciones en su expediente (${est.codigo_inscripcion}). Por favor revise el portal para subsanarlos a la brevedad.`;
+    } else if (tienePorRevisar(est)) {
+      cuerpo = `Estimado(a) ${est.nombres} ${est.apellidos}, le saludamos desde la Coordinación de Postgrado (${curso.programa_nombre}). Confirmamos la recepción digital de su expediente (${est.codigo_inscripcion}); actualmente se encuentra en revisión.`;
+    } else {
+      cuerpo = `Estimado(a) ${est.nombres} ${est.apellidos}, le saludamos desde la Coordinación de Postgrado (${curso.programa_nombre}). Su expediente (${est.codigo_inscripcion}) se encuentra completo y habilitado.`;
+    }
 
-    return `https://wa.me/${telefono}?text=${mensaje}`;
+    return `https://wa.me/${telefono}?text=${encodeURIComponent(cuerpo)}`;
+  };
+
+  // Impresión directa de ficha de requisitos (digital + checklist manual)
+  const imprimirFichaEstudiante = async (est: EstudianteSeguimiento) => {
+    try {
+      setImprimiendoEstId(est.inscripcion_id);
+      const docs: DocumentoItem[] = await SeguimientoService.getExpedienteEstudiante(est.inscripcion_id);
+      const win = window.open('', '_blank', 'width=900,height=700');
+      if (!win) {
+        alert('Por favor permite las ventanas emergentes para imprimir la ficha del postulante.');
+        return;
+      }
+
+      const escapeHtml = (str: string) =>
+        str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      const filas = docs
+        .map(
+          (d, i) => `
+          <tr>
+            <td style="text-align:center;">${i + 1}</td>
+            <td><strong>${escapeHtml(d.nombre_requisito)}</strong>${d.obligatorio ? ' <span style="color:#c51d25;">*</span>' : ' (Opcional)'}</td>
+            <td style="text-align:center;">${d.ruta_archivo ? escapeHtml(d.estado_revision) : 'Pendiente'}</td>
+            <td style="text-align:center;">${d.cotejado_fisico ? '[✓] Cotejado' : '[  ] Manual'}</td>
+            <td>${escapeHtml(d.observaciones || (d.nombre_archivo ? `Archivo: ${d.nombre_archivo}` : 'Sin archivo adjunto'))}</td>
+          </tr>`
+        )
+        .join('');
+
+      win.document.write(`
+        <!doctype html>
+        <html lang="es">
+          <head>
+            <meta charset="utf-8" />
+            <title>Ficha de Requisitos - ${escapeHtml(est.apellidos)} ${escapeHtml(est.nombres)}</title>
+            <style>
+              body { font-family: Arial, sans-serif; color: #0f172a; padding: 24px; font-size: 12px; }
+              h1 { font-size: 16px; color: #c51d25; margin: 0 0 4px; }
+              .sub { color: #475569; margin-bottom: 14px; }
+              .info { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #cbd5e1; padding: 6px 8px; vertical-align: top; }
+              th { background: #f1f5f9; text-align: left; font-size: 11px; text-transform: uppercase; }
+              .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 44px; text-align: center; }
+              @media print { body { padding: 0; } }
+            </style>
+          </head>
+          <body>
+            <h1>UNIDAD DE POSTGRADO (UPI) - FINI</h1>
+            <div class="sub">Ficha de Control de Requisitos Documentales (Digital y Manual)</div>
+            <div class="info">
+              <div><strong>Postulante:</strong> ${escapeHtml(est.apellidos)}, ${escapeHtml(est.nombres)}</div>
+              <div><strong>C.I.:</strong> ${escapeHtml(est.ci)}</div>
+              <div><strong>Programa:</strong> ${escapeHtml(curso.programa_nombre)}</div>
+              <div><strong>Código:</strong> ${escapeHtml(est.codigo_inscripcion)}</div>
+              <div><strong>Gestión:</strong> ${escapeHtml(curso.gestion)} (${escapeHtml(curso.version_edicion)})</div>
+              <div><strong>Estado:</strong> ${escapeHtml(est.estado_nombre)} (${est.porcentaje_avance}%)</div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:32px;text-align:center;">N°</th>
+                  <th>Requisito</th>
+                  <th style="width:90px;text-align:center;">Estado Digital</th>
+                  <th style="width:95px;text-align:center;">Cotejo Físico</th>
+                  <th>Observaciones / Archivo</th>
+                </tr>
+              </thead>
+              <tbody>${filas}</tbody>
+            </table>
+            <div class="firmas">
+              <div>_______________________________<br/><strong>Postulante</strong><br/>C.I.: ${escapeHtml(est.ci)}</div>
+              <div>_______________________________<br/><strong>Revisor / Coordinador</strong><br/>UPI - FINI</div>
+            </div>
+            <script>window.onload = function(){ window.print(); };</script>
+          </body>
+        </html>
+      `);
+      win.document.close();
+    } catch (err) {
+      alert('No se pudo generar la ficha de impresión del estudiante.');
+    } finally {
+      setImprimiendoEstId(null);
+    }
   };
 
   // Filtrado
@@ -98,35 +217,40 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
 
     if (!matchBusqueda) return false;
 
+    if (filtroEstado === 'por_revisar') {
+      return tienePorRevisar(est);
+    }
     if (filtroEstado === 'faltantes') {
       return est.requisitos_faltantes > 0;
     }
     if (filtroEstado === 'completos') {
-      return est.estado_expediente === 'COMPLETO' || est.estado_expediente === 'APROBADO';
+      return esCompleto(est);
     }
     if (filtroEstado === 'observados') {
-      return est.estado_expediente === 'OBSERVADO';
-    }
-    if (filtroEstado === 'aprobados') {
-      return est.estado_expediente === 'APROBADO';
+      return esObservado(est);
     }
 
     return true;
   });
 
-  const getBadgeEstado = (estado: string) => {
-    switch (estado) {
-      case 'APROBADO':
-        return <span className="badge badge-success"><CheckCircle2 size={12} /> Aprobado</span>;
-      case 'COMPLETO':
-        return <span className="badge badge-info"><CheckCircle2 size={12} /> Completo</span>;
-      case 'OBSERVADO':
-        return <span className="badge badge-danger"><AlertTriangle size={12} /> Observado</span>;
-      case 'INCOMPLETO':
-        return <span className="badge badge-warning"><Clock size={12} /> Incompleto</span>;
-      default:
-        return <span className="badge badge-neutral">Sin Subir</span>;
+  const getBadgeEstado = (est: EstudianteSeguimiento) => {
+    const nombre = est.estado_nombre.toLowerCase();
+    if (nombre === 'habilitada') {
+      return <span className="badge badge-success"><CheckCircle2 size={12} /> Habilitada</span>;
     }
+    if (nombre === 'completa') {
+      return <span className="badge badge-info"><CheckCircle2 size={12} /> Completa</span>;
+    }
+    if (nombre === 'observada' || est.requisitos_observados > 0) {
+      return <span className="badge badge-danger"><AlertTriangle size={12} /> Observada</span>;
+    }
+    if (tienePorRevisar(est)) {
+      return <span className="badge badge-info"><ClipboardCheck size={12} /> Por Revisar</span>;
+    }
+    if (nombre === 'incompleta' || est.requisitos_subidos > 0) {
+      return <span className="badge badge-warning"><Clock size={12} /> Incompleta</span>;
+    }
+    return <span className="badge badge-neutral">Sin Subir</span>;
   };
 
   return (
@@ -162,61 +286,88 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
               )}
             </div>
 
-            <h1 style={{ fontSize: '1.45rem', fontWeight: 700, color: '#0f172a' }}>
-              {curso.programa_nombre}
-            </h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <h1 style={{ fontSize: '1.45rem', fontWeight: 700, color: '#0f172a' }}>
+                {curso.programa_nombre}
+              </h1>
+              <span className="live-badge no-print" title="Actualización automática cada 12 segundos">
+                <span className="live-dot" />
+                <span>{actualizando ? 'Actualizando...' : 'Tiempo real'}</span>
+              </span>
+            </div>
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '2px' }}>
               Coordinador Encargado: <strong>{curso.coordinador_encargado || 'Sin Asignar'}</strong>
             </p>
           </div>
 
           {/* Acciones Superiores */}
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            <button onClick={() => setModalImportar(true)} className="btn btn-outline">
-              <Upload size={16} />
-              <span>Importar Estudiantes (Excel)</span>
+          <div className="no-print" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => cargarEstudiantes(true)} className="btn btn-outline btn-sm" disabled={actualizando}>
+              <RefreshCw size={15} />
+              <span>Actualizar</span>
+            </button>
+            <button type="button" onClick={() => window.print()} className="btn btn-outline btn-sm">
+              <Printer size={15} />
+              <span>Imprimir resumen</span>
+            </button>
+            <button type="button" onClick={() => setModalImportar(true)} className="btn btn-outline btn-sm">
+              <Upload size={15} />
+              <span>Importar Excel</span>
             </button>
 
-            <button type="button" onClick={() => SeguimientoService.descargarExcel(curso.edicion_id)} className="btn btn-success">
-              <FileSpreadsheet size={18} />
-              <span>Exportar Matriz a Excel</span>
+            <button type="button" onClick={() => SeguimientoService.descargarExcel(curso.edicion_id)} className="btn btn-success btn-sm">
+              <FileSpreadsheet size={16} />
+              <span>Exportar Excel</span>
             </button>
           </div>
         </div>
       </div>
 
       {/* Filtros Rápidos */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '20px' }}>
+      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '20px' }}>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
+            type="button"
             onClick={() => setFiltroEstado('todos')}
             className={`btn btn-sm ${filtroEstado === 'todos' ? 'btn-primary' : 'btn-outline'}`}
           >
             Todos ({estudiantes.length})
           </button>
           <button
+            type="button"
+            onClick={() => setFiltroEstado('por_revisar')}
+            className={`btn btn-sm ${filtroEstado === 'por_revisar' ? 'btn-primary' : 'btn-outline'}`}
+            style={{ color: filtroEstado === 'por_revisar' ? 'white' : '#1d4ed8' }}
+          >
+            <ClipboardCheck size={14} />
+            <span>Por revisar ({estudiantes.filter(tienePorRevisar).length})</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setFiltroEstado('faltantes')}
             className={`btn btn-sm ${filtroEstado === 'faltantes' ? 'btn-primary' : 'btn-outline'}`}
-            style={{ color: filtroEstado === 'faltantes' ? 'white' : '#ca8a04' }}
+            style={{ color: filtroEstado === 'faltantes' ? 'white' : '#a16207' }}
           >
             <Clock size={14} />
             <span>Faltan Documentos ({estudiantes.filter(e => e.requisitos_faltantes > 0).length})</span>
           </button>
           <button
+            type="button"
             onClick={() => setFiltroEstado('completos')}
             className={`btn btn-sm ${filtroEstado === 'completos' ? 'btn-primary' : 'btn-outline'}`}
-            style={{ color: filtroEstado === 'completos' ? 'white' : '#c51d25' }}
+            style={{ color: filtroEstado === 'completos' ? 'white' : '#15803d' }}
           >
             <CheckCircle2 size={14} />
-            <span>Completos ({estudiantes.filter(e => e.estado_expediente === 'COMPLETO' || e.estado_expediente === 'APROBADO').length})</span>
+            <span>Completos ({estudiantes.filter(esCompleto).length})</span>
           </button>
           <button
+            type="button"
             onClick={() => setFiltroEstado('observados')}
             className={`btn btn-sm ${filtroEstado === 'observados' ? 'btn-primary' : 'btn-outline'}`}
             style={{ color: filtroEstado === 'observados' ? 'white' : '#dc2626' }}
           >
             <AlertTriangle size={14} />
-            <span>Observados ({estudiantes.filter(e => e.estado_expediente === 'OBSERVADO').length})</span>
+            <span>Observados ({estudiantes.filter(esObservado).length})</span>
           </button>
         </div>
 
@@ -237,26 +388,25 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
         <table className="data-table">
           <thead>
             <tr>
-              <th style={{ width: '50px', textAlign: 'center' }}>N°</th>
-              <th style={{ width: '110px' }}>C.I.</th>
+              <th style={{ width: '44px', textAlign: 'center' }}>N°</th>
+              <th style={{ width: '105px' }}>C.I.</th>
               <th>Postulante / Maestrante</th>
-              <th style={{ width: '180px' }}>Avance Digital</th>
-              <th style={{ width: '110px', textAlign: 'center' }}>Cotejo Físico</th>
-              <th style={{ width: '130px' }}>Estado</th>
+              <th style={{ width: '190px' }}>Avance y Cotejo</th>
+              <th style={{ width: '125px' }}>Estado</th>
               <th>Documentos Faltantes</th>
-              <th style={{ width: '180px', textAlign: 'center' }}>Acciones</th>
+              <th className="no-print" style={{ width: '230px', textAlign: 'center' }}>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
+                <td colSpan={7} style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
                   Cargando postulantes y seguimiento...
                 </td>
               </tr>
             ) : estudiantesFiltrados.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
+                <td colSpan={7} style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
                   No hay maestrantes en este filtro.
                 </td>
               </tr>
@@ -274,7 +424,7 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
                     </td>
                     <td>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: '2px' }}>
-                        <span style={{ fontWeight: 600 }}>{est.requisitos_subidos} de {est.total_requisitos}</span>
+                        <span style={{ fontWeight: 600 }}>{est.requisitos_subidos}/{est.total_requisitos} digital</span>
                         <span>{est.porcentaje_avance}%</span>
                       </div>
                       <div className="progress-container">
@@ -286,14 +436,12 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
                           }}
                         />
                       </div>
+                      <div style={{ fontSize: '0.73rem', marginTop: '4px', fontWeight: 600, color: est.requisitos_cotejados_fisico === est.total_requisitos && est.total_requisitos > 0 ? '#16a34a' : '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Stamp size={12} />
+                        <span>Cotejo físico: {est.requisitos_cotejados_fisico}/{est.total_requisitos}</span>
+                      </div>
                     </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: est.requisitos_cotejados_fisico === est.total_requisitos ? '#16a34a' : '#64748b' }}>
-                        <Stamp size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '3px' }} />
-                        {est.requisitos_cotejados_fisico}/{est.total_requisitos}
-                      </span>
-                    </td>
-                    <td>{getBadgeEstado(est.estado_expediente)}</td>
+                    <td>{getBadgeEstado(est)}</td>
                     <td>
                       {est.documentos_faltantes_nombres.length === 0 ? (
                         <span style={{ fontSize: '0.78rem', color: '#16a34a', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -319,34 +467,61 @@ export const SeguimientoCurso: React.FC<SeguimientoCursoProps> = ({
                         </div>
                       )}
                     </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <div style={{ display: 'flex', justifyContent: 'center', gap: '6px' }}>
+                    <td className="no-print" style={{ textAlign: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         <button
+                          type="button"
                           onClick={() => onVerExpediente(est)}
                           className="btn btn-outline btn-sm"
-                          title="Revisar expediente en Split-View"
+                          title="Revisar expediente y mostrar documentos"
                         >
                           <Eye size={13} />
                           <span>Revisar</span>
                         </button>
 
-                        {/* Botón WhatsApp de 1 Clic si tiene faltantes */}
-                        {est.requisitos_faltantes > 0 && whatsappUrl && (
+                        {whatsappUrl ? (
                           <a
                             href={whatsappUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn btn-sm"
-                            style={{ background: '#25D366', color: 'white', padding: '6px 8px' }}
-                            title="Enviar recordatorio por WhatsApp de requisitos faltantes"
+                            style={{ background: '#25D366', color: 'white', padding: '6px 9px' }}
+                            title="Abrir WhatsApp con mensaje listo"
                           >
                             <MessageSquare size={14} />
+                            <span>Mensaje</span>
                           </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => alert(`El postulante ${est.nombres} ${est.apellidos} no tiene número de teléfono registrado.`)}
+                            className="btn btn-outline btn-sm"
+                            style={{ padding: '6px 8px', opacity: 0.6 }}
+                            title="Sin teléfono registrado para WhatsApp"
+                          >
+                            <MessageSquare size={14} />
+                          </button>
                         )}
 
-                        {/* Botón Comprobante PDF si está habilitado */}
-                        {(est.estado_expediente === 'COMPLETO' || est.estado_expediente === 'APROBADO') && (
-                          <button type="button" onClick={() => SeguimientoService.descargarComprobantePdf(est.inscripcion_id)} className="btn btn-sm" style={{ background: '#c51d25', color: 'white', padding: '6px 8px' }} title="Descargar Boleta Oficial de Conformidad Documental (PDF)">
+                        <button
+                          type="button"
+                          onClick={() => imprimirFichaEstudiante(est)}
+                          disabled={imprimiendoEstId === est.inscripcion_id}
+                          className="btn btn-outline btn-sm"
+                          style={{ padding: '6px 8px' }}
+                          title="Imprimir ficha de requisitos (digital y manual)"
+                        >
+                          <Printer size={14} />
+                        </button>
+
+                        {esCompleto(est) && (
+                          <button
+                            type="button"
+                            onClick={() => SeguimientoService.verComprobantePdf(est.inscripcion_id)}
+                            className="btn btn-sm"
+                            style={{ background: '#c51d25', color: 'white', padding: '6px 8px' }}
+                            title="Mostrar Boleta Oficial de Conformidad Documental (PDF)"
+                          >
                             <FileCheck size={14} />
                           </button>
                         )}

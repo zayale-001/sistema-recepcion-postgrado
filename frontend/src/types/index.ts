@@ -121,7 +121,7 @@ export interface DocumentoItem {
   nombre_archivo?: string;
   ruta_archivo?: string;
   fecha_carga?: string;
-  estado_revision: string; // 'Pendiente' | 'Válido' | 'Observado' | 'Rechazado'
+  estado_revision: string; // 'Pendiente' | 'Válido' | 'Observado'
   observaciones?: string;
   cotejado_fisico: boolean;
   fecha_cotejo_fisico?: string;
