@@ -207,6 +207,18 @@ export const DocumentosService = {
     const baseName = file.name.replace(/\.pdf$/i, '');
     const compressedFile = new File([res.data], `${baseName}_optimizado.pdf`, { type: 'application/pdf' });
     return { file: compressedFile, originalSize, compressedSize };
+  },
+  unirImagenesPdf: async (files: File[]) => {
+    const formData = new FormData();
+    files.forEach((f) => formData.append('archivos', f));
+    const res = await api.post('/documentos/unir-imagenes-pdf', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+    });
+    const originalSize = Number(res.headers['x-original-size'] || files.reduce((a, b) => a + b.size, 0));
+    const compressedSize = Number(res.headers['x-compressed-size'] || res.data.size);
+    const pdfFile = new File([res.data], 'documento_unido.pdf', { type: 'application/pdf' });
+    return { file: pdfFile, originalSize, compressedSize };
   }
 };
 

@@ -258,3 +258,56 @@ async def comprimir_pdf(
             "Content-Disposition": f'inline; filename="{nombre_salida}"',
         },
     )
+
+
+@router.post("/unir-imagenes-pdf")
+async def unir_imagenes_pdf(
+    archivos: list[UploadFile] = File(...),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Combina varias imágenes (JPG/PNG) en un único archivo PDF optimizado."""
+    if not archivos:
+        raise HTTPException(status_code=400, detail="Selecciona al menos una imagen JPG o PNG.")
+    if len(archivos) > 20:
+        raise HTTPException(status_code=400, detail="Puedes unir hasta 20 imágenes por documento.")
+
+    try:
+        from PIL import Image
+    except ImportError:
+        raise HTTPException(status_code=501, detail="La conversión de imágenes a PDF no está disponible en el servidor.")
+
+    imagenes_rgb = []
+    total_bytes = 0
+    for archivo in archivos:
+        ext = os.path.splitext(archivo.filename or "")[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png"):
+            raise HTTPException(status_code=400, detail=f"Archivo no válido ({archivo.filename}). Solo se permiten JPG o PNG.")
+        data = await archivo.read(15 * 1024 * 1024 + 1)
+        if len(data) > 15 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=f"La imagen {archivo.filename} supera los 15 MB.")
+        total_bytes += len(data)
+        try:
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            imagenes_rgb.append(img)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"No se pudo leer la imagen {archivo.filename}.")
+
+    pdf_buf = io.BytesIO()
+    try:
+        primera, resto = imagenes_rgb[0], imagenes_rgb[1:]
+        primera.save(pdf_buf, format="PDF", save_all=True, append_images=resto, resolution=130.0)
+    finally:
+        for img in imagenes_rgb:
+            img.close()
+
+    pdf_bytes = pdf_buf.getvalue()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "X-Original-Size": str(total_bytes),
+            "X-Compressed-Size": str(len(pdf_bytes)),
+            "Access-Control-Expose-Headers": "X-Original-Size, X-Compressed-Size",
+            "Content-Disposition": 'inline; filename="documento_unido.pdf"',
+        },
+    )

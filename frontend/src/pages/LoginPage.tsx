@@ -57,7 +57,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     if (nuevaContraseña !== confirmarContraseña) return setError('Las contraseñas no coinciden.');
     setLoading(true);
     try {
-      const data = await AuthService.restablecerContraseña(resetToken, nuevaContraseña);
+      const data = await AuthService.restablecerContrasena(resetToken, nuevaContraseña);
       setMensaje(data.detail);
       setResetToken('');
       window.history.replaceState({}, '', window.location.pathname);

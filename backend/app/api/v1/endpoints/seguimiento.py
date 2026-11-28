@@ -210,8 +210,8 @@ def validar_documento(
 
     exigir_acceso_inscripcion(current_user, doc.inscripcion, db)
 
-    if validacion.estado_revision not in ("Válido", "Observado", "Rechazado", "Pendiente"):
-        raise HTTPException(status_code=400, detail="Estado de revisión inválido.")
+    if validacion.estado_revision not in ("Válido", "Observado", "Pendiente"):
+        raise HTTPException(status_code=400, detail="Estado de revisión inválido. Use Válido, Observado o Pendiente.")
 
     doc.estado_revision = validacion.estado_revision
     doc.observaciones = validacion.observaciones

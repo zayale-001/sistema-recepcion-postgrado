@@ -14,7 +14,10 @@ import {
   Maximize2,
   Eye,
   Printer,
-  Minimize2
+  Minimize2,
+  RotateCw,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react';
 
 interface DetalleExpedienteModalProps {
@@ -37,6 +40,8 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
   const [subiendoReqId, setSubiendoReqId] = useState<string | null>(null);
   const [tabDerecha, setTabDerecha] = useState<'visor' | 'auditoria'>('visor');
   const [mostrarCompresor, setMostrarCompresor] = useState(false);
+  const [rotacionImg, setRotacionImg] = useState(0);
+  const [zoomImg, setZoomImg] = useState(1);
 
   useEffect(() => {
     cargarExpediente();
@@ -46,6 +51,8 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
     let vigente = true;
     let urlTemporal: string | null = null;
     setDocumentoUrl(null);
+    setRotacionImg(0);
+    setZoomImg(1);
     if (docSeleccionado?.ruta_archivo) {
       DocumentosService.obtenerDocumentoUrl(docSeleccionado.id_documento)
         .then(url => {
@@ -348,8 +355,29 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
               {tabDerecha === 'visor' ? (
                 docSeleccionado && docSeleccionado.ruta_archivo ? (
                   <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ fontSize: '0.82rem', color: '#475569', marginBottom: '8px', fontWeight: 600 }}>
-                      Mostrando: {docSeleccionado.nombre_requisito} ({docSeleccionado.nombre_archivo})
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>
+                        Mostrando: {docSeleccionado.nombre_requisito} ({docSeleccionado.nombre_archivo})
+                      </div>
+                      {/\.(jpg|jpeg|png)$/i.test(docSeleccionado.nombre_archivo || '') && (
+                        <div className="no-print" style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                          <button type="button" onClick={() => setZoomImg((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))} className="btn btn-outline btn-sm" style={{ padding: '4px 7px' }} title="Alejar">
+                            <ZoomOut size={13} />
+                          </button>
+                          <span style={{ fontSize: '0.75rem', minWidth: '42px', textAlign: 'center', color: '#475569' }}>{Math.round(zoomImg * 100)}%</span>
+                          <button type="button" onClick={() => setZoomImg((z) => Math.min(3, Number((z + 0.25).toFixed(2))))} className="btn btn-outline btn-sm" style={{ padding: '4px 7px' }} title="Acercar">
+                            <ZoomIn size={13} />
+                          </button>
+                          <button type="button" onClick={() => setRotacionImg((r) => (r + 90) % 360)} className="btn btn-outline btn-sm" style={{ padding: '4px 7px' }} title="Rotar 90°">
+                            <RotateCw size={13} />
+                          </button>
+                          {(rotacionImg !== 0 || zoomImg !== 1) && (
+                            <button type="button" onClick={() => { setRotacionImg(0); setZoomImg(1); }} className="btn btn-outline btn-sm" style={{ padding: '4px 8px', fontSize: '0.72rem' }}>
+                              Restablecer
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                     {/\.(jpg|jpeg|png)$/i.test(docSeleccionado.nombre_archivo || '') ? (
                       <div style={{ width: '100%', height: '100%', minHeight: '500px', border: '1px solid #cbd5e1', borderRadius: '8px', background: 'white', overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
@@ -357,7 +385,14 @@ export const DetalleExpedienteModal: React.FC<DetalleExpedienteModalProps> = ({
                           <img
                             src={documentoUrl}
                             alt={docSeleccionado.nombre_requisito}
-                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                            style={{
+                              maxWidth: zoomImg === 1 ? '100%' : 'none',
+                              maxHeight: zoomImg === 1 ? '100%' : 'none',
+                              objectFit: 'contain',
+                              transform: `rotate(${rotacionImg}deg) scale(${zoomImg})`,
+                              transformOrigin: 'center center',
+                              transition: 'transform 0.2s ease'
+                            }}
                           />
                         )}
                       </div>
